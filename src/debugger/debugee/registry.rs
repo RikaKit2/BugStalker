@@ -193,11 +193,19 @@ impl DwarfRegistry {
     pub fn all_dwarf(&self) -> Vec<&DebugInformation> {
         let mut dwarfs: Vec<_> = self.files.values().collect();
         dwarfs.sort_unstable_by(|d1, d2| {
+            if d1.pathname() == d2.pathname() {
+                return Ordering::Equal;
+            }
             if d1.pathname() == self.program_path {
                 return Ordering::Less;
-            };
+            }
+            if d2.pathname() == self.program_path {
+                return Ordering::Greater;
+            }
 
-            d1.unit_count().cmp(&d2.unit_count())
+            d1.unit_count()
+                .cmp(&d2.unit_count())
+                .then_with(|| d1.pathname().cmp(d2.pathname()))
         });
         dwarfs
     }
@@ -293,9 +301,12 @@ impl DwarfRegistry {
             .collect();
 
         regions.sort_unstable_by(|i1, i2| {
+            if i1.path == i2.path {
+                return Ordering::Equal;
+            }
             if i1.path == self.program_path {
                 return Ordering::Less;
-            };
+            }
             if i2.path == self.program_path {
                 return Ordering::Greater;
             }
