@@ -38,7 +38,7 @@ jobs:
 
       - name: Cargo Build Release
         run: |
-          cargo build --release --locked
+          cargo build --release
           strip target/release/bs
 
       - name: Package Artifact
