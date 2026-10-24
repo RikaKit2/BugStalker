@@ -295,6 +295,7 @@ impl ExplorationContext {
 pub struct DebuggerBuilder<H: EventHook + 'static = NopHook> {
     oracles: Vec<Arc<dyn Oracle>>,
     hooks: Option<H>,
+    stop_on_entry: bool,
 }
 
 impl<H: EventHook + 'static> DebuggerBuilder<H> {
@@ -303,6 +304,7 @@ impl<H: EventHook + 'static> DebuggerBuilder<H> {
         Self {
             oracles: vec![],
             hooks: None,
+            stop_on_entry: false,
         }
     }
 
@@ -326,6 +328,13 @@ impl<H: EventHook + 'static> DebuggerBuilder<H> {
             ..self
         }
     }
+    /// Stop on program entry point.
+    pub fn with_stop_on_entry(self, stop_on_entry: bool) -> Self {
+        Self {
+            stop_on_entry,
+            ..self
+        }
+    }
 
     /// Return all oracles.
     pub fn oracles(&self) -> impl Iterator<Item = &dyn Oracle> {
@@ -339,9 +348,9 @@ impl<H: EventHook + 'static> DebuggerBuilder<H> {
     /// * `process`: debugee process
     pub fn build(self, process: Child<Installed>) -> Result<Debugger, Error> {
         if let Some(hooks) = self.hooks {
-            Debugger::new(process, hooks, self.oracles)
+            Debugger::new(process, hooks, self.oracles, self.stop_on_entry)
         } else {
-            Debugger::new(process, NopHook {}, self.oracles)
+            Debugger::new(process, NopHook {}, self.oracles, self.stop_on_entry)
         }
     }
 
@@ -381,6 +390,8 @@ pub struct Debugger {
     oracles: IndexMap<&'static str, (Arc<dyn Oracle>, bool)>,
     /// Detach flag to skip destructive cleanup on drop.
     detached: bool,
+    /// Stop on debugee entry point.
+    stop_on_entry: bool,
 }
 
 impl Debugger {
@@ -388,6 +399,7 @@ impl Debugger {
         process: Child<Installed>,
         hooks: impl EventHook + 'static,
         oracles: impl IntoIterator<Item = Arc<dyn Oracle>>,
+        stop_on_entry: bool,
     ) -> Result<Self, Error> {
         let program_path = Path::new(process.program());
 
@@ -424,6 +436,7 @@ impl Debugger {
                 .map(|oracle| (oracle.name(), (oracle, false)))
                 .collect(),
             detached: false,
+            stop_on_entry,
         })
     }
 
@@ -619,6 +632,10 @@ impl Debugger {
 
                                 // ignore possible signals and watchpoints
                                 while self.step_over_breakpoint()?.is_some() {}
+                                if self.stop_on_entry {
+                                    self.ecx_update_location()?;
+                                    break StopReason::DebugeeStart;
+                                }
                                 continue;
                             }
                             BrkptType::LinkerMapFn => {

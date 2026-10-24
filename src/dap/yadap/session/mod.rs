@@ -53,6 +53,7 @@ pub struct DebugSession {
     module_info: Option<init::ModuleInfo>,
     canceled_request_ids: HashSet<i64>,
     canceled_progress_ids: HashSet<String>,
+    stop_on_entry: bool,
 }
 
 const EXCEPTION_FILTER_SIGNAL: &str = "signal";
@@ -125,6 +126,7 @@ impl DebugSession {
             module_info: None,
             canceled_request_ids: HashSet::new(),
             canceled_progress_ids: HashSet::new(),
+            stop_on_entry: false,
         }
     }
 

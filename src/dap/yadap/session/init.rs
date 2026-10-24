@@ -85,6 +85,7 @@ impl super::DebugSession {
 
         let dbg = debugger::DebuggerBuilder::<debugger::NopHook>::new()
             .with_oracles(oracles)
+            .with_stop_on_entry(self.stop_on_entry)
             .build(process)
             .context("Build debugger")?;
         self.debugger = Some(dbg);
@@ -213,6 +214,11 @@ impl super::DebugSession {
         // Source map (remote/WSL/container path mapping).
         self.source_map = SourceMap::from_launch_args(&req.arguments);
         // Reset session termination state for a new launch.
+        self.stop_on_entry = req
+            .arguments
+            .get("stopOnEntry")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         self.terminated = false;
         self.exit_code = None;
         self.session_mode = Some(SessionMode::Launch);
@@ -362,10 +368,9 @@ impl super::DebugSession {
     }
 
     pub(super) fn handle_configuration_done(&mut self, req: &DapRequest) -> anyhow::Result<()> {
-        let dbg = self
-            .debugger
-            .as_mut()
-            .ok_or_else(|| anyhow!("configurationDone: debugger not initialized"))?;
+        if self.debugger.is_none() {
+            anyhow::bail!("configurationDone: debugger not initialized");
+        }
 
         if self.session_mode == Some(SessionMode::Attach) {
             self.send_success(req)?;
@@ -373,8 +378,10 @@ impl super::DebugSession {
             return Ok(());
         }
 
-        let stop = dbg.start_debugee_with_reason().context("start debugee")?;
         self.send_success(req)?;
+
+        let dbg = self.debugger.as_mut().unwrap();
+        let stop = dbg.start_debugee_with_reason().context("start debugee")?;
         self.emit_stop_reason(stop)?;
         Ok(())
     }
