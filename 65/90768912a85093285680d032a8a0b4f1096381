@@ -1,0 +1,28 @@
+Cargo.lock
+  h_a2ad924e60e190 202
+Cargo.toml
+  h_a2ad924e60e190 3
+src/debugger/debugee/dwarf/loader.rs
+  h_a2ad924e60e190 147-279
+src/debugger/debugee/dwarf/location.rs
+  h_a2ad924e60e190 5,28-29
+src/debugger/debugee/dwarf/mod.rs
+  h_a2ad924e60e190 846
+src/debugger/debugee/dwarf/unit/die_ref.rs
+  h_a2ad924e60e190 140-141,145-146,149-150
+src/debugger/debugee/dwarf/unit/mod.rs
+  h_a2ad924e60e190 240-258,338-339,360-361,368-381,387-428,711
+src/debugger/debugee/dwarf/unit/parser.rs
+  h_a2ad924e60e190 5,26,31-43,93-121,143-144,159
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6590768912a85093285680d032a8a0b4f1096381",
+  "prompts": {},
+  "humans": {
+    "h_a2ad924e60e190": {
+      "author": "RikaKit2 <174120712+RikaKit2@users.noreply.github.com>"
+    }
+  }
+}
