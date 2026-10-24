@@ -843,7 +843,7 @@ impl DebugInformationBuilder {
                 .ok()
         });
 
-        let parser = DwarfUnitParser::new(&dwarf);
+        let parser = DwarfUnitParser::new(&dwarf).with_obj_path(obj_path);
         let headers = dwarf.units().collect::<Result<Vec<_>, _>>()?;
 
         if headers.is_empty() {

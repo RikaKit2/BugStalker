@@ -137,15 +137,17 @@ impl<'dbg, H: Hint> FatDieRef<'dbg, H> {
     }
 
     pub fn dcx(&'_ self) -> DerefContext<'_, '_> {
-        DerefContext::new(self.debug_info.dwarf(), self.unit().unit())
+        let unit = self.unit();
+        DerefContext::new(unit.dwarf(self.debug_info.dwarf()), unit.unit())
     }
 
     pub fn deref(&self) -> Result<Die<'dbg>, Error> {
+        let unit = self.unit();
+        let dwarf = unit.dwarf(self.debug_info.dwarf());
         let die = match self.reference {
             DieReference::Offset(unit_offset) => Die::Dwarf {
-                dcx: DerefContext::new(self.debug_info.dwarf(), self.unit().unit()),
-                die: self
-                    .unit()
+                dcx: DerefContext::new(dwarf, unit.unit()),
+                die: unit
                     .unit()
                     .entry(unit_offset)
                     .map_err(|_| Error::DieNotFound(super::DieAddr::Unit(unit_offset)))?,

@@ -237,6 +237,25 @@ struct UnitProperties {
     address_size: u8,
 }
 
+#[derive(Debug, Clone)]
+pub struct SkeletonInfo {
+    pub dwo_name: String,
+    pub dwo_id: Option<gimli::DwoId>,
+    pub comp_dir: Option<String>,
+    pub obj_path: PathBuf,
+}
+
+pub struct DwoData {
+    pub dwarf: std::sync::Arc<Dwarf<EndianArcSlice>>,
+    pub unit: gimli::Unit<EndianArcSlice>,
+}
+
+impl std::fmt::Debug for DwoData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DwoData").finish_non_exhaustive()
+    }
+}
+
 /// This fields is a part of a compilation unit but
 /// loaded on first call, for reduce memory consumption.
 #[derive(Debug, Clone)]
@@ -316,6 +335,8 @@ pub struct BsUnit {
     lazy_part: OnceCell<UnitLazyPart>,
     language: Option<DwLang>,
     producer: Option<String>,
+    pub skeleton_info: Option<SkeletonInfo>,
+    pub dwo: OnceCell<Option<std::sync::Arc<DwoData>>>,
 }
 
 impl BsUnit {
@@ -336,18 +357,75 @@ impl BsUnit {
             lazy_part: self.lazy_part.clone(),
             language: self.language,
             producer: self.producer.clone(),
+            skeleton_info: self.skeleton_info.clone(),
+            dwo: self.dwo.clone(),
             unit,
         }
     }
 
     #[inline(always)]
     pub fn unit(&self) -> &gimli::Unit<EndianArcSlice> {
-        &self.unit
+        if let Some(Some(dwo)) = self.dwo.get() {
+            &dwo.unit
+        } else {
+            &self.unit
+        }
+    }
+
+    #[inline(always)]
+    pub fn dwarf<'a>(&'a self, main_dwarf: &'a Dwarf<EndianArcSlice>) -> &'a Dwarf<EndianArcSlice> {
+        if let Some(Some(dwo)) = self.dwo.get() {
+            &dwo.dwarf
+        } else {
+            main_dwarf
+        }
     }
 
     /// Update unit to full state.
     /// Note: this method will panic if called twice.
     pub fn reload(&self, parser: DwarfUnitParser) -> Result<(), Error> {
+        if let Some(skel) = &self.skeleton_info {
+            if self.dwo.get().is_none() {
+                let dwo_path = crate::debugger::debugee::dwarf::loader::resolve_dwo_path(
+                    &skel.obj_path,
+                    skel.comp_dir.as_deref(),
+                    &skel.dwo_name,
+                );
+                match dwo_path {
+                    Some(path) => {
+                        match crate::debugger::debugee::dwarf::loader::load_dwo(
+                            &path,
+                            parser.dwarf(),
+                            skel.dwo_id,
+                            &self.unit,
+                        ) {
+                            Ok((dwo_dwarf, dwo_unit)) => {
+                                let dwo_data = std::sync::Arc::new(DwoData {
+                                    dwarf: std::sync::Arc::new(dwo_dwarf),
+                                    unit: dwo_unit,
+                                });
+                                let _ = self.dwo.set(Some(dwo_data.clone()));
+                                let dwo_parser = DwarfUnitParser::new(&dwo_data.dwarf);
+                                let additional = dwo_parser.parse_additional(self)?;
+                                self.lazy_part
+                                    .set(additional)
+                                    .expect("lazy part must be empty");
+                                return Ok(());
+                            }
+                            Err(e) => {
+                                log::warn!(target: "dwarf-loader", "failed to load dwo {:?}: {e}", path);
+                                let _ = self.dwo.set(None);
+                            }
+                        }
+                    }
+                    None => {
+                        log::warn!(target: "dwarf-loader", "dwo file not found for {}", skel.dwo_name);
+                        let _ = self.dwo.set(None);
+                    }
+                }
+            }
+        }
+
         let additional = parser.parse_additional(self)?;
         self.lazy_part
             .set(additional)
@@ -630,7 +708,7 @@ impl BsUnit {
         match self.lazy_part.get() {
             None => UnitResult::Reload,
             Some(_) => UnitResult::Ok(ExpressionEvaluator::new(
-                dwarf,
+                self.dwarf(dwarf),
                 self,
                 self.encoding(),
                 debugee,

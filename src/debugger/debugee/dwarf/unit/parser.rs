@@ -2,7 +2,7 @@ use crate::debugger::context::gcx;
 use crate::debugger::debugee::dwarf::unit::die::DerefContext;
 use crate::debugger::debugee::dwarf::unit::{
     BsUnit, DieRange, END_SEQUENCE, EPILOG_BEGIN, FunctionInfo, IS_STMT, LineRow, PROLOG_END,
-    UnitLazyPart, UnitProperties,
+    SkeletonInfo, UnitLazyPart, UnitProperties,
 };
 use crate::debugger::debugee::dwarf::utils::PathSearchIndex;
 use crate::debugger::debugee::dwarf::{EndianArcSlice, NamespaceHierarchy};
@@ -23,11 +23,24 @@ use uuid::Uuid;
 
 pub struct DwarfUnitParser<'a> {
     dwarf: &'a gimli::Dwarf<EndianArcSlice>,
+    obj_path: Option<PathBuf>,
 }
 
 impl<'a> DwarfUnitParser<'a> {
     pub fn new(dwarf: &'a gimli::Dwarf<EndianArcSlice>) -> Self {
-        Self { dwarf }
+        Self {
+            dwarf,
+            obj_path: None,
+        }
+    }
+
+    pub fn with_obj_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.obj_path = Some(path.into());
+        self
+    }
+
+    pub fn dwarf(&self) -> &'a gimli::Dwarf<EndianArcSlice> {
+        self.dwarf
     }
 
     fn attr_to_string(
@@ -77,6 +90,35 @@ impl<'a> DwarfUnitParser<'a> {
         });
         let producer = self.attr_to_string(&unit, root, DW_AT_producer)?;
 
+
+        let dwo_name = unit
+            .dwo_name()
+            .ok()
+            .flatten()
+            .and_then(|attr| self.dwarf.attr_string(&unit, attr).ok())
+            .map(|l| l.to_string_lossy().map(|s| s.to_string()))
+            .transpose()?;
+
+        let dwo_id = unit.dwo_id;
+        let comp_dir = unit
+            .comp_dir
+            .as_ref()
+            .and_then(|r| r.to_string_lossy().ok().map(|s| s.to_string()));
+
+        let skeleton_info = if (dwo_name.is_some()
+            || dwo_id.is_some()
+            || root.tag() == gimli::DW_TAG_skeleton_unit)
+            && self.obj_path.is_some()
+        {
+            dwo_name.map(|name| SkeletonInfo {
+                dwo_name: name,
+                dwo_id,
+                comp_dir,
+                obj_path: self.obj_path.clone().unwrap(),
+            })
+        } else {
+            None
+        };
         ranges.shrink_to_fit();
 
         Ok(BsUnit {
@@ -98,6 +140,8 @@ impl<'a> DwarfUnitParser<'a> {
             lazy_part: OnceCell::new(),
             language,
             producer,
+            skeleton_info,
+            dwo: OnceCell::new(),
         })
     }
 
@@ -112,7 +156,7 @@ impl<'a> DwarfUnitParser<'a> {
         let mut function_name_index = PathSearchIndex::new("::");
         let mut parent_index = IndexMap::<UnitOffset, UnitOffset>::new();
 
-        let mut cursor = bs_unit.unit.entries();
+        let mut cursor = bs_unit.unit().entries();
         let mut parent_offset = None;
         while cursor.next_entry()? {
             let Some(die) = cursor.current() else {

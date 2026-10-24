@@ -144,3 +144,136 @@ pub fn load_par(file: &File, endian: RunTimeEndian) -> Result<Dwarf<EndianArcSli
         abbreviations_cache: AbbreviationsCache::new(),
     })
 }
+
+pub fn load_dwo_section(
+    id: SectionId,
+    file: &File,
+    endian: RunTimeEndian,
+) -> Result<EndianArcSlice, Error> {
+    let sect = id
+        .dwo_name()
+        .and_then(|name| file.section_by_name(name))
+        .or_else(|| file.section_by_name(id.name()));
+
+    let data = sect
+        .and_then(|section| section.uncompressed_data().ok())
+        .unwrap_or(Cow::Borrowed(&[]));
+    Ok(gimli::EndianArcSlice::new(Arc::from(&*data), endian))
+}
+
+pub fn resolve_dwo_path(
+    obj_path: &std::path::Path,
+    comp_dir: Option<&str>,
+    dwo_name: &str,
+) -> Option<std::path::PathBuf> {
+    let dwo_path = std::path::Path::new(dwo_name);
+
+    if dwo_path.is_absolute() && dwo_path.exists() {
+        return Some(dwo_path.to_path_buf());
+    }
+
+    if let Some(comp_dir) = comp_dir {
+        let candidate = std::path::Path::new(comp_dir).join(dwo_path);
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+
+    if let Some(obj_dir) = obj_path.parent() {
+        let candidate = obj_dir.join(dwo_path);
+        if candidate.exists() {
+            return Some(candidate);
+        }
+
+        if let Some(file_name) = dwo_path.file_name() {
+            let candidate_deps = obj_dir.join("deps").join(file_name);
+            if candidate_deps.exists() {
+                return Some(candidate_deps);
+            }
+
+            let candidate_same = obj_dir.join(file_name);
+            if candidate_same.exists() {
+                return Some(candidate_same);
+            }
+        }
+    }
+
+    None
+}
+
+pub fn load_dwo(
+    path: &std::path::Path,
+    parent_dwarf: &Dwarf<EndianArcSlice>,
+    expected_dwo_id: Option<gimli::DwoId>,
+    skeleton_unit: &gimli::Unit<EndianArcSlice>,
+) -> Result<(Dwarf<EndianArcSlice>, gimli::Unit<EndianArcSlice>), Error> {
+    let file = std::fs::File::open(path)?;
+    let mmap = unsafe { memmap2::Mmap::map(&file)? };
+    let obj = object::File::parse(&*mmap)?;
+    let endian = if obj.is_little_endian() {
+        RunTimeEndian::Little
+    } else {
+        RunTimeEndian::Big
+    };
+
+    let mut dwo_dwarf = Dwarf {
+        debug_abbrev: Section::load(|id| load_dwo_section(id, &obj, endian))?,
+        debug_addr: Section::load(|id| load_dwo_section(id, &obj, endian))?,
+        debug_aranges: Section::load(|id| load_dwo_section(id, &obj, endian))?,
+        debug_info: Section::load(|id| load_dwo_section(id, &obj, endian))?,
+        debug_line: Section::load(|id| load_dwo_section(id, &obj, endian))?,
+        debug_line_str: Section::load(|id| load_dwo_section(id, &obj, endian))?,
+        debug_macro: Section::load(|id| load_dwo_section(id, &obj, endian))?,
+        debug_macinfo: Section::load(|id| load_dwo_section(id, &obj, endian))?,
+        debug_names: Section::load(|id| load_dwo_section(id, &obj, endian))?,
+        debug_str: Section::load(|id| load_dwo_section(id, &obj, endian))?,
+        debug_str_offsets: Section::load(|id| load_dwo_section(id, &obj, endian))?,
+        debug_types: Section::load(|id| load_dwo_section(id, &obj, endian))?,
+        locations: LocationLists::new(
+            Section::load(|id| load_dwo_section(id, &obj, endian))?,
+            Section::load(|id| load_dwo_section(id, &obj, endian))?,
+        ),
+        ranges: RangeLists::new(
+            Section::load(|id| load_dwo_section(id, &obj, endian))?,
+            Section::load(|id| load_dwo_section(id, &obj, endian))?,
+        ),
+        file_type: DwarfFileType::Dwo,
+        sup: None,
+        abbreviations_cache: AbbreviationsCache::new(),
+    };
+
+    dwo_dwarf.make_dwo(parent_dwarf);
+
+    let mut units_iter = dwo_dwarf.units();
+    let mut chosen_unit = None;
+
+    while let Some(header) = units_iter.next()? {
+        if let Some(expected_id) = expected_dwo_id {
+            match header.type_() {
+                gimli::UnitType::SplitCompilation(id) if id == expected_id => {
+                    let mut u = dwo_dwarf.unit(header)?;
+                    u.copy_relocated_attributes(skeleton_unit);
+                    chosen_unit = Some(u);
+                    break;
+                }
+                _ => {
+                    let u = dwo_dwarf.unit(header)?;
+                    if u.dwo_id == Some(expected_id) {
+                        let mut u = u;
+                        u.copy_relocated_attributes(skeleton_unit);
+                        chosen_unit = Some(u);
+                        break;
+                    }
+                }
+            }
+        } else {
+            let mut u = dwo_dwarf.unit(header)?;
+            u.copy_relocated_attributes(skeleton_unit);
+            chosen_unit = Some(u);
+            break;
+        }
+    }
+
+    let unit = chosen_unit.ok_or(Error::UnitNotFound(0_u64.into()))?;
+    Ok((dwo_dwarf, unit))
+}

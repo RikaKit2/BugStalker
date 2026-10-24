@@ -2,7 +2,7 @@ use crate::debugger::address::GlobalAddress;
 use crate::debugger::debugee::dwarf::unit::BsUnit;
 use crate::debugger::debugee::dwarf::{DebugInformation, EndianArcSlice};
 use crate::weak_error;
-use gimli::{Attribute, AttributeValue, Expression};
+use gimli::{Attribute, Expression};
 
 pub(super) struct Location<'a>(pub(super) &'a Attribute<EndianArcSlice>);
 
@@ -25,24 +25,8 @@ impl Location<'_> {
         if let Some(expr) = self.0.exprloc_value() {
             return Some(expr);
         }
-
-        let offset = match self.0.value() {
-            AttributeValue::LocationListsRef(offset) => offset,
-            AttributeValue::DebugLocListsIndex(index) => weak_error!(di.locations().get_offset(
-                unit.encoding(),
-                unit.loclists_base(),
-                index
-            ))?,
-            _ => return None,
-        };
-
-        let mut iter = weak_error!(di.locations().locations(
-            offset,
-            unit.encoding(),
-            unit.low_pc(),
-            di.debug_addr(),
-            unit.addr_base(),
-        ))?;
+        let dwarf = unit.dwarf(di.dwarf());
+        let mut iter = weak_error!(dwarf.attr_locations(unit.unit(), self.0.value()))??;
 
         let pc = u64::from(pc);
         let entry = iter
