@@ -1,0 +1,22 @@
+Cargo.lock
+  h_a2ad924e60e190 202
+Cargo.toml
+  h_a2ad924e60e190 3
+src/dap/yadap/session/init.rs
+  h_a2ad924e60e190 88,217-221,371-373,382-384
+src/dap/yadap/session/mod.rs
+  h_a2ad924e60e190 56,129
+src/debugger/mod.rs
+  h_a2ad924e60e190 298,307,331-337,351,353,393-394,402,439,635-638
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5f190d05e690b44e60831be583bcf91d6049b770",
+  "prompts": {},
+  "humans": {
+    "h_a2ad924e60e190": {
+      "author": "RikaKit2 <174120712+RikaKit2@users.noreply.github.com>"
+    }
+  }
+}
